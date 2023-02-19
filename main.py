@@ -133,11 +133,12 @@ class WebdavPlugin(StellarPlayer.IStellarPlayerPlugin):
         self.ssl = self.player.getControlValue('login', 'SSL')
         self.protocol = 'https' if self.ssl else 'http'
         self.verify = self.player.getControlValue('login', '验证SSL证书')
+        print(self.path)
         self.save_config()
         self.player.loadingAnimation('login')
         try:
             self.webdav = easywebdav.connect(self.host, port=int(self.port), username=self.username,
-                                             password=self.password, path=self.path, protocol=self.protocol,
+                                             password=self.password, protocol=self.protocol,path=self.path, 
                                              verify_ssl=self.verify)
             self.webdav.ls()
             self.player.closeModal('login', True)
