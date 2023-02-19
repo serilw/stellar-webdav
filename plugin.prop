@@ -1,4 +1,4 @@
-name=webdav
-description=webdav远程连接
-url=https://github.com/ninebird1/stellar-webdav
-version=3
+name=webdav客户端
+description=webdav远程
+url=https://github.com/serilw/stellar-webdav
+version=1
