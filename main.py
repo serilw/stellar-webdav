@@ -98,7 +98,7 @@ class webdevclientplugin(StellarPlayer.IStellarPlayerPlugin):
             server_protocol = 'http'
         self.webdav = easywebdav.connect(self.server_ip, username = self.server_username, password = self.server_pwd, protocol = server_protocol, port = self.server_port,path="/dav/")
         if self.webdav:
-            self.maindir = '/'
+            self.maindir = '/dav/'
             self.onLoadDir()
         else:
             self.player.toast('main','连接失败')
