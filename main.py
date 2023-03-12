@@ -1,177 +1,193 @@
-import json
-import os
-import sys
-import traceback
-import urllib.parse
-
-sys.path.append(os.path.dirname(__file__))
-import easywebdav
-# easywebdav = __import__('stellar-webdav.easywebdav')
 import StellarPlayer
+import json
+import urllib
+import os
+from . import easywebdav
 
-
-class WebdavPlugin(StellarPlayer.IStellarPlayerPlugin):
-    def __init__(self, player: StellarPlayer.IStellarPlayer):
+class webdevclientplugin(StellarPlayer.IStellarPlayerPlugin):
+    def __init__(self,player:StellarPlayer.IStellarPlayer):
         super().__init__(player)
-        self.playurl = []
-        self.url = ''
         self.webdav = None
-        self.path = '/'
-        self.dir = None
-        self.username = ''
-        self.password = ''
-        self.host = ''
-        self.port = ''
-        self.ssl = False
-        self.verify = False
-        self.protocol = 'http'
-
+        self.dirlist_val = []
+        self.filelist_val = []
+        self.configjson = ''
+        self.maindir = '/'
+        self.server_ip = ''
+        self.server_port = 80
+        self.server_username = ''
+        self.server_pwd = ''
+        self.is_ssl = False
+        
+    def show(self):
+        controls = self.makeLayout()
+        self.doModal('main',1200,800,'',controls)
+    
+    def start(self):
+        super().start()
+        self.configjson = self.player.dataDirectory + os.path.sep + 'config.json'
+        if os.path.isfile(self.configjson):
+            file = open(self.configjson, "rb")
+            fileJson = json.loads(file.read())
+            if fileJson:
+                if 'ip' in fileJson:
+                    self.server_ip = fileJson['ip']
+                if 'port' in fileJson:
+                    self.server_port = fileJson['port']
+                if 'username' in fileJson:
+                    self.server_username = fileJson['username']
+                if 'password' in fileJson:
+                    self.server_pwd = fileJson['password']
+                if 'ssl' in fileJson:
+                    self.is_ssl = fileJson['ssl']
+    
+    def makeLayout(self):
+        dirlist_layout ={'type':'link','name':'dirname', '@click': 'on_dirlist_item_dblclick','fontSize':15}
+        filelist_layout ={'type':'link','name':'filename', '@click': 'on_filelist_item_dblclick','fontSize':15}
+        controls = [
+            {'group':
+                [
+                    {'type':'space','height':5},
+                    {'type':'edit','name':'ip_edit','value':self.server_ip,'label':'主机(ip)','width':300,'height':25},
+                    {'type':'space','height':5},
+                    {'group':
+                        [
+                            {'type':'edit','name':'port_edit','value':str(self.server_port),'label':'端      口','width':150},
+                            {'type':'space','width':50},
+                            {'type':'check','name':'ssl','value':self.is_ssl}
+                        ],
+                        'height':25
+                    },
+                    {'type':'space','height':5},
+                    {'type':'edit','name':'user_edit','value':self.server_username,'label':'用 户 名','width':300,'height':25},
+                    {'type':'space','height':5},
+                    {'group':
+                        [
+                            {'type':'edit','name':'pwd_edit','value':self.server_pwd, 'label':'密      码','width':300},
+                            {'type':'space','width':5},
+                            {'type':'button','name':'连接','width':60,'@click':'onConnect'},
+                            {'type':'space','width':5},
+                            {'type':'button','name':'保存设置','width':60,'@click':'onSave'},
+                        ],
+                        'height':25
+                    }
+                ],
+                'dir':'vertical',
+                'height':120
+            },
+            {'type':'space','height':5},
+            {'group':
+                [
+                    {'type':'space','width':5},
+                    {'type':'list','name':'dirlist','itemheight':30,'itemlayout':dirlist_layout,':value':'dirlist_val','width':0.25,'separator': True},
+                    {'type':'space','width':5},
+                    {'type':'list','name':'filelist','itemheight':30,'itemlayout':filelist_layout,':value':'filelist_val','width':0.74,'separator': True},
+                ]
+            }
+        ]
+        return controls
+        
+    def onConnect(self,*args):
+        self.server_ip = self.player.getControlValue('main','ip_edit').strip()
+        self.server_port = int(self.player.getControlValue('main','port_edit'))
+        self.server_username = self.player.getControlValue('main','user_edit').strip()
+        self.server_pwd = self.player.getControlValue('main','pwd_edit').strip()
+        self.is_ssl = self.player.getControlValue('main','ssl')
+        if self.is_ssl:
+            server_protocol = 'https'
+        else:
+            server_protocol = 'http'
+        self.webdav = easywebdav.connect(self.server_ip, username = self.server_username, password = self.server_pwd, protocol = server_protocol, port = self.server_port,path="/dav/")
+        if self.webdav:
+            self.maindir = '/'
+            self.onLoadDir()
+        else:
+            self.player.toast('main','连接失败')
+            
+    def onSave(self,*args):
+        jsondata = {}
+        jsondata['ip'] = self.player.getControlValue('main','ip_edit').strip()
+        strport = self.player.getControlValue('main','port_edit').strip()
+        if strport == '':
+            jsondata['port'] = 0
+        else:
+            jsondata['port'] = int(strport)
+        jsondata['username'] = self.player.getControlValue('main','user_edit').strip()
+        jsondata['password'] = self.player.getControlValue('main','pwd_edit').strip()
+        jsondata['ssl'] = self.player.getControlValue('main','ssl')
+        if os.path.exists(self.player.dataDirectory) == False:
+            os.makedirs(self.player.dataDirectory) 
+        with open(self.configjson,"w") as f:
+            json.dump(jsondata,f,sort_keys=True, indent=4, separators=(',', ':'))
+            
     def isdir(self, item: easywebdav.File):
         if item.contenttype == 'httpd/unix-directory':
             return True
-        # 类型为空，并且大小为0
-        if not item.contenttype and item.size == 0:
-            return True
+        if item.size == 0:
+            if not item.contenttype:
+                return True
+            checkfiles = self.webdav.ls(item.name)
+            if len(checkfiles) <= 1:
+                return True
         return False
-
-    def ls(self):
-        if not self.path.endswith('/'):
-            self.path = self.path + '/'
-        self.dir = self.webdav.ls(self.path)[1:]
-        print(self.dir)
-        # 文件夹类型排在前面
-        self.dir.sort(key=lambda item: 0 if self.isdir(item) else 1)
-        list_val = []
-        for i in self.dir:
-            path = i.name
-            if self.isdir(i) and not path.endswith('/'):
-                path = path + '/'
-            path = path.replace(self.path, '', 1)
-            list_val.append({'title': urllib.parse.unquote(path)})
-        return list_val
-
-    def update_list_view(self):
-        self.player.loadingAnimation('main')
-        list_val = self.ls()
-        self.player.loadingAnimation('main', stop=True)
-        self.player.updateControlValue('main', 'path', urllib.parse.unquote(self.path))
-        self.player.updateControlValue('main', 'list', list_val)
-
-    def show(self):
-        if not self.webdav:
-            self.load_config()
-            controls = [
-                {'type': 'space', 'height': 10},
-                {'type': 'edit', 'name': '主机名', 'height': 30, 'value': self.host},
-                {'type': 'space', 'height': 10},
-                {
-                    'group': [
-                        {'type': 'edit', 'name': '路径', 'height': 30, 'width': 0.4, 'value': self.path},
-                        {'type': 'edit', 'name': '端口', 'height': 30, 'width': 0.4, 'value': self.port},
-                        {'type': 'check', 'name': 'SSL', 'height': 30, 'width': 0.1, ':value': 'ssl'},
-                        {'type': 'check', 'name': '验证SSL证书', 'height': 30, 'width': 0.2, ':value': 'verify'},
-                    ],
-                    'height': 30
-                },
-                {'type': 'space', 'height': 10},
-                {'type': 'edit', 'name': '用户名', 'height': 30, 'value': self.username},
-                {'type': 'space', 'height': 10},
-                {'type': 'edit', 'name': '密码', 'height': 30, 'value': self.password},
-                {'type': 'space', 'height': 10},
-                {'type': 'button', 'name': '连接', '@click': 'on_connect_webdav', 'height': 30}
-            ]
-
-            self.doModal('login', 600, 400, '', controls)
-
+            
+    def onLoadDir(self):
+        self.loading()
+        self.dirlist_val = []
+        self.filelist_val = []
+        files = self.webdav.ls(self.maindir)
+        files.sort()
+        for file in files:
+            if self.isdir(file):
+                if file.name == self.maindir:
+                    if self.maindir != '/':
+                        pos = file.name.rfind("/")
+                        path = file.name[:pos]
+                        pos = path.rfind("/")
+                        path = path[:pos]
+                        if path == '':
+                            path = '/'
+                        self.dirlist_val.append({'dirname':' ..','path':path})
+                    else:
+                        self.dirlist_val.append({'dirname':' ..','path':'/'})
+                else:
+                    dirname = file.name.lstrip(self.maindir)
+                    dirname = urllib.parse.unquote(dirname)
+                    self.dirlist_val.append({'dirname':dirname,'path':file.name})
+            else:
+                filename = file.name.lstrip(self.maindir)
+                filename = urllib.parse.unquote(filename)
+                self.filelist_val.append({'filename':filename,'path':file.name})
+        self.player.updateControlValue('main','dirlist',self.dirlist_val)
+        self.player.updateControlValue('main','filelist',self.filelist_val)
+        self.loading(True)
+    
+    def on_dirlist_item_dblclick(self, page, control, item, *arg):
+        if self.webdav:
+            dirpath = self.dirlist_val[item]['path']
+            self.maindir = dirpath
+            if dirpath[-1] != '/':
+                self.maindir = self.maindir + '/'
+            self.onLoadDir()
         else:
-            list_val = self.ls()
-            list_layout = {'type': 'link', 'name': 'title', '@click': 'on_click_item'}
-            controls = [
-                {
-                    'group':
-                        [
-                            {'type': 'link', 'name': '返回', 'width': 30, '@click': 'on_click_back'},
-                            {'type': 'label', 'name': 'path', 'value': self.path},
-                        ],
-                    'height': 30
-                },
-                {'type': 'list', 'name': 'list', 'itemlayout': {'group': list_layout}, 'value': list_val,
-                 'separator': True, 'itemheight': 40}
-            ]
-            self.doModal('main', 800, 600, '', controls)
-
-    def load_config(self):
-        try:
-            f = open('config.json', 'r')
-            config = json.load(f)
-            self.host = config.get('host', '')
-            self.port = config.get('port', '')
-            self.username = config.get('username', '')
-            self.password = config.get('password', '')
-            self.path = config.get('path', '')
-            self.ssl = config.get('ssl', False)
-            self.verify = config.get('verify', False)
-            f.close()
-        except:
-            traceback.print_exc()
-
-    def save_config(self):
-        try:
-            f = open('config.json', 'w')
-            json.dump({'host': self.host, 'port': self.port, 'path': self.path, 'username': self.username, 'password': self.password,
-                       'ssl': self.ssl, 'verify': self.verify}, f)
-            f.close()
-        except:
-            traceback.print_exc()
-
-    def on_connect_webdav(self, *arg):
-        self.host = self.player.getControlValue('login', '主机名')
-        self.port = self.player.getControlValue('login', '端口')
-        self.username = self.player.getControlValue('login', '用户名')
-        self.path = self.player.getControlValue('path', '路径')
-        self.password = self.player.getControlValue('login', '密码')
-        self.ssl = self.player.getControlValue('login', 'SSL')
-        self.protocol = 'https' if self.ssl else 'http'
-        self.verify = self.player.getControlValue('login', '验证SSL证书')
-        print(self.path)
-        self.save_config()
-        self.player.loadingAnimation('login')
-        try:
-            self.webdav = easywebdav.connect(self.host, port=int(self.port), username=self.username,
-                                             password=self.password, protocol=self.protocol,path=self.path, 
-                                             verify_ssl=self.verify)
-            self.webdav.ls()
-            self.player.closeModal('login', True)
-            self.show()
-        except Exception as e:
-            print(e)
-            self.player.loadingAnimation('login', stop=True)
-            self.player.toast('login', '连接失败\r\n' + str(e))
-            self.webdav = None
-
-    def on_click_item(self, page, control, idx, *arg):
-        file = self.dir[idx]
-        if self.isdir(file):
-            self.path = file.name
-            self.update_list_view()
+            self.player.toast('main','连接无效')
+            
+    def on_filelist_item_dblclick(self, page, control, item, *arg):
+        playpath =  self.filelist_val[item]['path']
+        if self.is_ssl:
+            playurl = 'https://' 
         else:
-            self.player.play(f'{self.protocol}://{self.username}:{self.password}@{self.host}:{self.port}' + file.name)
+            playurl = 'http://'
+        playurl = playurl + self.server_username + ':' + self.server_pwd + '@' + self.server_ip + ':' + str(self.server_port) + playpath
+        print(playurl)
+        self.player.play(playurl)
 
-    def on_click_back(self, *arg):
-        if self.path != '/':
-            temp = self.path.split('/')
-            paths = []
-            for i in temp:
-                if i:
-                    paths.append(i)
-            self.path = '/' + '/'.join(paths[:-1])
-            self.update_list_view()
-
-
-def newPlugin(player: StellarPlayer.IStellarPlayer, *arg):
-    plugin = WebdavPlugin(player)
+    def loading(self, stopLoading = False):
+        if hasattr(self.player,'loadingAnimation'):
+            self.player.loadingAnimation('main', stop=stopLoading)
+        
+def newPlugin(player:StellarPlayer.IStellarPlayer,*arg):
+    plugin = webdevclientplugin(player)
     return plugin
 
-
-def destroyPlugin(plugin: StellarPlayer.IStellarPlayerPlugin):
+def destroyPlugin(plugin:StellarPlayer.IStellarPlayerPlugin):
     plugin.stop()
